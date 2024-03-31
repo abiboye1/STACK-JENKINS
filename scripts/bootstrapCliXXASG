@@ -1,0 +1,100 @@
+#!/bin/bash -xe 
+
+#install packages
+sudo su -
+
+sudo su -
+# Set the variables for the EBS volumes and the logical volume
+echo "Mounting EBS Volumes"
+
+for vol in sdf sdg sdh sdi sdj
+do
+sudo parted /dev/$vol mklabel gpt
+
+parted /dev/$vol mkpart primary ext4 0% 100%
+done
+
+#Create physical volume
+pvcreate /dev/sdf1 /dev/sdg1 /dev/sdh1 /dev/sdi1 /dev/sdj1
+
+#Create the Volume Group:
+vgcreate stack_vg /dev/sdf1 /dev/sdg1 /dev/sdh1 /dev/sdi1 /dev/sdj1
+
+#create the Logical Volumes (LUNS) with about 5G of space allocated initially:
+for LUN in u01 u02 u03 u04 backups
+do
+lvcreate -L 5G -n Lv_$LUN stack_vg
+
+#create est4 file system
+mkfs.ext4 /dev/stack_vg/Lv_$LUN
+
+mkdir /$LUN
+
+mount /dev/stack_vg/Lv_$LUN /$LUN
+
+lvextend -L +3G /dev/mapper/stack_vg-Lv_$LUN
+
+resize2fs /dev/mapper/stack_vg-Lv_$LUN
+
+echo "/dev/stack_vg/Lv_$LUN    /$LUN    ext4    defaults,noatime   0   2" >> /etc/fstab
+
+mount -a
+done
+
+yum update -y
+yum install git -y
+amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+yum install -y httpd mariadb-server
+systemctl start httpd
+systemctl enable httpd
+systemctl is-enabled httpd
+
+##add user to Apache group and grant permissions to /var/www
+usermod -a -G apache ec2-user
+chown -R ec2-user:apache /var/www
+chmod 2775 /var/www && find /var/www -type d -exec sudo chmod 2775 {} \;
+find /var/www -type f -exec sudo chmod 0664 {} \;
+cd ${MOUNT_POINT}
+sudo chmod -R 755 ${MOUNT_POINT}
+
+if ! [ -e /var/www/html/CliXX_Retail_Repository ]; then
+    git clone ${GIT_REPO}
+    cp -r CliXX_Retail_Repository/* ${MOUNT_POINT}
+
+else
+    echo "Directory 'CliXX_Retail_Repository' already exists."
+
+fi
+
+DB_HOST=$(echo "${RDS_INSTANCE}" | sed 's/':3306'//g')
+
+#replace DB Hostname in configuration file
+sed -i "s/'wordpress-db.cc5iigzknvxd.us-east-1.rds.amazonaws.com'/'$${DB_HOST}'/g" /var/www/html/wp-config.php
+
+#grant file ownership of /var/www & its contents to apache user
+chown -R apache /var/www
+
+#grant group ownership of /var/www & contents to apache group
+chgrp -R apache /var/www
+
+#change directory permissions
+chmod 2775 /var/www
+find /var/www -type d -exec sudo chmod 2775 {} \;
+
+#recursively change file permission of /var/www & subdir to add group write perm
+find /var/www -type f -exec sudo chmod 0664 {} \;
+ 
+mysql -h "$${DB_HOST}" -u "${DB_USER}" -p"${DB_PASSWORD}" <<EOF
+    use wordpressdb;
+    Update wp_options SET option_value="dev.clixx.stack-abib.com" WHERE option_value like '%CliXX%';
+EOF
+
+#Update wp_options SET option_value="${LB_DNS}" WHERE option_value like '%CliXX%';
+
+#restart Apache
+systemctl restart httpd
+service httpd restart
+
+#enable httpd
+systemctl enable httpd
+sudo /sbin/sysctl -w net.ipv4.tcp_keepalive_time=200 net.ipv4.tcp_keepalive_intvl=200 net.ipv4.tcp_keepalive_probes=5

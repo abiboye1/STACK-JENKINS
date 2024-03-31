@@ -1,0 +1,161 @@
+#!/bin/bash -xe
+
+sudo su -
+# Set the variables for the EBS volumes and the logical volume
+echo "Mounting EBS Volumes"
+
+for vol in sdf sdg sdh sdi sdj
+do
+sudo parted /dev/$vol mklabel gpt
+
+parted /dev/$vol mkpart primary ext4 0% 100%
+done
+
+#Create physical volume
+pvcreate /dev/sdf1 /dev/sdg1 /dev/sdh1 /dev/sdi1 /dev/sdj1
+
+#Create the Volume Group:
+vgcreate stack_vg /dev/sdf1 /dev/sdg1 /dev/sdh1 /dev/sdi1 /dev/sdj1
+
+#create the Logical Volumes (LUNS) with about 5G of space allocated initially:
+for LUN in u01 u02 u03 u04 backups
+do
+lvcreate -L 5G -n Lv_$LUN stack_vg
+
+#create est4 file system
+mkfs.ext4 /dev/stack_vg/Lv_$LUN
+
+mkdir /$LUN
+
+mount /dev/stack_vg/Lv_$LUN /$LUN
+
+lvextend -L +3G /dev/mapper/stack_vg-Lv_$LUN
+
+resize2fs /dev/mapper/stack_vg-Lv_$LUN
+
+echo "/dev/stack_vg/Lv_$LUN    /$LUN    ext4    defaults,noatime   0   2" >> /etc/fstab
+
+mount -a
+done
+
+#installing updates without confirmation
+sudo yum update -y
+
+#installing the latest versions of the LAMP MariaDB and PHP packages for Amazon Linux 2
+sudo amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+
+#installing Apache web server, MariaDB, and PHP software packages and dependencies
+sudo yum install -y httpd mariadb-server
+
+#starting Apache server
+sudo systemctl start httpd
+
+#using the systemctl command to configure Apache Web Server to start at each reboot
+sudo systemctl enable httpd
+
+#verifying that httpd us on 
+sudo systemctl is-enabled httpd
+
+#adding ec2-user to apache group to Modify ownership and permission
+sudo usermod -a -G apache ec2-user
+
+#verifying membership in the "Apache" group
+groups
+
+#changing the group ownership of /var/www and its content to the "Apache" group
+sudo chown -R ec2-user:apache /var/www
+sudo chmod 2775 /var/www && find /var/www -type d -exec sudo chmod 2775 {} \;
+
+#adding group write permissions, recursively change the file permissions of /var/www and its subdirectories:
+find /var/www -type f -exec sudo chmod 0664 {} \;
+
+#creating a PHP file in the Apache document root
+echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php
+
+#verifying that the /var/www/html/phpinfo.php file was created properly
+sudo yum list installed httpd mariadb-server php-mysqlnd
+
+#deleting the phpinfo.php file
+rm /var/www/html/phpinfo.php
+
+#securing the Maria database server
+sudo systemctl start mariadb
+
+#setting the root user secure configurations
+mysql -u root << EOF
+UPDATE mysql.user SET authentication_string = PASSWORD('root') WHERE User = 'root';
+DELETE FROM mysql.user WHERE user='';
+DELETE FROM mysql.user WHERE User= 'root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+DROP DATABASE IF EXISTS test;
+FLUSH PRIVILEGES;
+EOF
+
+#installing PHP Admin
+sudo yum install php-mbstring -y
+
+#restarting Apache
+sudo systemctl restart httpd
+
+#restarting php-fpm
+sudo systemctl restart php-fpm
+
+#downloading the source package for the latest phpMyAdmin release to root - "/var/www/html"
+cd /var/www/html
+wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.tar.gz
+mkdir phpMyAdmin && tar -xvzf phpMyAdmin-latest-all-languages.tar.gz -C phpMyAdmin --strip-components 1
+
+#deleting the phpMyAdmin-latest-all-languages.tar.gz tarball.
+rm phpMyAdmin-latest-all-languages.tar.gz
+
+#installing WordPress
+wget https://wordpress.org/latest.tar.gz
+tar -xzf latest.tar.gz
+sudo systemctl start mariadb
+
+#creating database user and database for WordPress installation:
+mysql -u root <<EOF
+CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
+CREATE DATABASE \`${DB_NAME}\`;
+GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+db_host=$(echo "${RDS_INSTANCE}" | sed 's/':3306'//g')
+
+#creating and editing the wp-config.php file:
+cp /var/www/html/wordpress/wp-config-sample.php /var/www/html/wordpress/wp-config.php
+
+#copying contents of the wordpress installation directory to root 
+cp -r /var/www/html/wordpress/* /var/www/html/
+
+sed -i "s/'database_name_here'/'${DB_NAME}'/g" /var/www/html/wp-config.php
+sed -i "s/'username_here'/'${DB_USER}'/g" /var/www/html/wp-config.php
+sed -i "s/'password_here'/'${DB_PASSWORD}'/g" /var/www/html/wp-config.php
+sed -i "s/'database_host'/'$${db_host}'/g" /var/www/html/wp-config.php
+
+#change file
+sudo sed -i '151s/None/All/' /etc/httpd/conf/httpd.conf
+
+#set permissions and ownership for root
+cd /var/www/html
+sudo find . -type d -exec chmod 775 {} \;
+sudo find . -type f -exec chmod 664 {} \;
+sudo chown -R apache:apache .
+
+#running the WordPress installation script
+sudo systemctl enable httpd
+sudo systemctl enable mariadb
+
+sudo systemctl status mariadb
+sudo systemctl status httpd
+
+sudo yum install -y php-cli
+sudo curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+sudo chmod +x wp-cli.phar
+sudo mv wp-cli.phar /usr/local/bin/wp
+
+#installing and configuring the welcome page with the pulled IP address
+# wp core install --url="${LB_DNS}" --title="Welcome To Abib's Blog" --admin_user="${DB_USER}" --admin_password="${DB_PASSWORD}" --admin_email="${db_email}"
+wp core install --url="dev.blog.stack-abib.com" --title="Welcome To Abib's Blog" --admin_user="${DB_USER}" --admin_password="${DB_PASSWORD}" --admin_email="${db_email}"
+
+wp theme install twentyseventeen --activate
