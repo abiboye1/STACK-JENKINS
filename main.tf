@@ -1,7 +1,14 @@
 ### Declare Key Pair
+# locals {
+#   ServerPrefix = ""
+# }
+
 locals {
   ServerPrefix = ""
-}
+  db_creds = jsondecode(
+    data.aws_secretsmanager_secret_version.creds.secret_string
+  )
+ }
 
 resource "aws_key_pair" "Stack_KP" {
   key_name   = "stack_dep_kp"

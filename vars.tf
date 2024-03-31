@@ -1,7 +1,7 @@
 variable "AWS_ACCESS_KEY" {}
 variable "AWS_SECRET_KEY" {}
-variable "AWS_REGION" {}
-variable "ami" {}
+# variable "AWS_REGION" {}
+# variable "ami" {}
 
 variable "environment" {
   default = "dev"
@@ -125,21 +125,13 @@ variable "clixx_snapshot_id" {
 }
 
 
-variable "db_user_clixx" {
-  default = "wordpressuser"
-}
+# variable "db_user_clixx" {}
 
-variable "db_user_blog" {
-  default = "admin"
-}
+# variable "db_user_blog" {}
 
-variable "db_password" {
-  default = "W3lcome123"
-}
+# variable "db_password" {}
 
-variable "db_name" {
-  default = "wordpressdb"
-}
+# variable "db_name" {}
 
 variable "dev_names" {
   default = ["sdf", "sdg", "sdh", "sdi", "sdj"]

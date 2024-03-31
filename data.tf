@@ -17,14 +17,8 @@ data "aws_db_snapshot" "blogdb" {
   db_snapshot_identifier = var.blog_snapshot_id
 }
 
-# data "aws_subnets" "stack_sub" {
-#   filter {
-#     name   = "vpc-id"
-#     values = [aws_vpc.main.id]
-#   }
-# }
 
-# data "aws_subnet" "stack_sub" {
-#   for_each = toset(data.aws_subnets.stack_sub.ids)
-#   id       = each.value
-# }
+data "aws_secretsmanager_secret_version" "creds" {
+  # Fill in the name you gave to your secret
+  secret_id = "creds"
+ }
