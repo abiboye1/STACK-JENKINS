@@ -9,11 +9,11 @@ pipeline {
                 sh "terraform init"
         }
         },
-        stage('terraform init'){
-            steps {
-                sh "terraform plan"
-        }
-        }
+        // stage('terraform init'){
+        //     steps {
+        //         sh "terraform plan"
+        // }
+        // }
          
     }
 }
